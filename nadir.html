@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flappy Bird Clone</title>
+    <style>
+        @font-face {
+            font-family: 'PixelFont';
+            src: url('fonts/PixelFont.ttf');
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #70c5ce;
+            overflow: hidden;
+            margin: 0;
+            font-family: 'PixelFont', Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #000;
+        }
+        .menu, .game-over {
+            text-align: center;
+            display: none;
+        }
+        .menu.active, .game-over.active {
+            display: block;
+        }
+        .title {
+            font-size: 48px;
+            color: #fff;
+            text-shadow: 2px 2px #000;
+        }
+        .button {
+            font-size: 24px;
+            color: #fff;
+            background: #4ec0ca;
+            border: 2px solid #000;
+            padding: 10px 20px;
+            margin: 10px;
+            cursor: pointer;
+            text-shadow: 2px 2px #000;
+        }
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1;
+        }
+        .game-over .score {
+            font-size: 24px;
+            color: #fff;
+            text-shadow: 2px 2px #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="menu active">
+        <div class="title">Rana Nadir</div>
+        <div class="button" onclick="startGame()">Play</div>
+        <div class="button" onclick="viewScores()">High Scores</div>
+    </div>
+    <div class="game-over">
+        <div class="title">Game Over</div>
+        <div class="score">Score: <span id="finalScore">0</span></div>
+        <div class="button" onclick="restartGame()">Restart</div>
+    </div>
+    <canvas id="gameCanvas" width="320" height="480" style="display:none;"></canvas>
+    <audio id="backgroundMusic" loop>
+        <source src="sounds/background.mp3" type="audio/mp3">
+    </audio>
+    <audio id="jumpSound">
+        <source src="sounds/jump.mp3" type="audio/mp3">
+    </audio>
+    <audio id="pipeCrossSound">
+        <source src="sounds/pipe_cross.mp3" type="audio/mp3">
+    </audio>
+    <audio id="birdDeathSound">
+        <source src="sounds/bird_death.mp3" type="audio/mp3">
+    </audio>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const birdImg = new Image();
+        birdImg.src = 'images/bird.png';
+
+        const pipeImgs = [
+            'images/pipe1.png',
+            'images/pipe2.png',
+            'images/pipe3.png',
+            'images/pipe4.png'
+        ];
+
+        const cloudsImg = new Image();
+        cloudsImg.src = 'images/clouds.png';
+
+        const floorImg = new Image();
+        floorImg.src = 'images/floor.png';
+
+        const backgroundImg = new Image(); 
+        backgroundImg.src = 'images/background.png'; 
+
+        const backgroundMusic = document.getElementById('backgroundMusic');
+        backgroundMusic.volume = 0.5; // Set volume to half
+
+        const jumpSound = document.getElementById('jumpSound');
+        const pipeCrossSound = document.getElementById('pipeCrossSound');
+        const birdDeathSound = document.getElementById('birdDeathSound');
+
+        // Ensure all images are loaded before starting the game
+        const imagesToLoad = [birdImg, ...pipeImgs.map(src => {
+            let img = new Image();
+            img.src = src;
+            return img;
+        }), cloudsImg, floorImg, backgroundImg];
+
+        let loadedImagesCount = 0;
+
+        imagesToLoad.forEach(img => {
+            img.onload = () => {
+                loadedImagesCount++;
+                if (loadedImagesCount === imagesToLoad.length) {
+                    // Do not start the game until all images are loaded
+                }
+            };
+        });
+
+        let bird = {
+            x: 50,
+            y: 150,
+            width: 34,
+            height: 24,
+            gravity: 0.5,
+            lift: -10,
+            velocity: 0,
+            draw: function() {
+                ctx.drawImage(birdImg, this.x, this.y, this.width, this.height);
+            },
+            update: function() {
+                this.velocity += this.gravity;
+                this.velocity *= 0.9;
+                this.y += this.velocity;
+
+                if (this.y + this.height > canvas.height - 50) {
+                    this.y = canvas.height - this.height - 50;
+                    this.velocity = 0;
+                    gameOver();
+                }
+
+                if (this.y < 0) {
+                    this.y = 0;
+                    this.velocity = 0;
+                }
+            },
+            up: function() {
+                this.velocity += this.lift;
+                jumpSound.play(); // Play jump sound
+            }
+        };
+
+        function drawBackground() {
+            ctx.drawImage(backgroundImg, 0, 0, canvas.width, canvas.height);
+        }
+
+        let pipes = [];
+        const pipeWidth = 90;
+        const pipeGap = 260;
+        const pipeFrequency = 200;
+        let score = 0;
+        let cloudOffset = 0;
+        let floorOffset = 0;
+        let gameIsOver = false;
+        const horizontalBuffer = -20;  // Horizontal buffer (distance on both sides of the bird)
+        const verticalBuffer = -10;    // Vertical buffer (distance above and below the bird)
+
+        function addPipe() {
+            const randomPipeSrc = pipeImgs[Math.floor(Math.random() * pipeImgs.length)];
+            const pipeHeight = Math.floor(Math.random() * (canvas.height - pipeGap - 50));
+
+            pipes.push({
+                x: canvas.width,
+                y: 0,
+                width: pipeWidth,
+                height: pipeHeight,
+                flipped: true,
+                src: randomPipeSrc,
+                scored: false
+            });
+            pipes.push({
+                x: canvas.width,
+                y: pipeHeight + pipeGap,
+                width: pipeWidth,
+                height: canvas.height - pipeHeight - pipeGap - 50,
+                flipped: false,
+                src: randomPipeSrc,
+                scored: false
+            });
+        }
+
+        function drawPipes() {
+            pipes.forEach(pipe => {
+                const pipeImg = new Image();
+                pipeImg.src = pipe.src;
+
+                if (pipe.flipped) {
+                    ctx.save();
+                    ctx.scale(1, -1);
+                    ctx.drawImage(pipeImg, pipe.x, -pipe.y - pipe.height, pipe.width, pipe.height);
+                    ctx.restore();
+                } else {
+                    ctx.drawImage(pipeImg, pipe.x, pipe.y, pipe.width, pipe.height);
+                }
+            });
+        }
+
+        function updatePipes() {
+            pipes.forEach(pipe => {
+                pipe.x -= 2;
+
+                if (!pipe.scored && pipe.x + pipe.width < bird.x) {
+                    score += 0.5;
+                    pipe.scored = true;
+                    pipeCrossSound.play(); // Play pipe crossing sound
+                }
+
+                // Collision detection with the horizontal and vertical buffer (touching pipes)
+                if (
+                    pipe.x < bird.x + bird.width + horizontalBuffer && 
+                    pipe.x + pipe.width > bird.x - horizontalBuffer && 
+                    pipe.y < bird.y + bird.height + verticalBuffer && 
+                    pipe.y + pipe.height > bird.y - verticalBuffer
+                ) {
+                    gameOver();
+                }
+            });
+            pipes = pipes.filter(pipe => pipe.x + pipe.width > 0); // Remove pipes that are off-screen
+        }
+
+        function drawScore() {
+            ctx.fillStyle = '#ff0';
+            ctx.font = 'bold 16px PixelFont';
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#000';
+            ctx.strokeText(`Score: ${Math.floor(score)}`, canvas.width - 110, 30);
+            ctx.fillText(`Score: ${Math.floor(score)}`, canvas.width - 110, 30);
+        }
+
+        function drawClouds() {
+            ctx.drawImage(cloudsImg, cloudOffset, 0, canvas.width, canvas.height);
+            ctx.drawImage(cloudsImg, cloudOffset + canvas.width, 0, canvas.width, canvas.height);
+        }
+
+        function updateClouds() {
+            cloudOffset -= 0.5;
+            if (cloudOffset <= -canvas.width) {
+                cloudOffset = 0;
+            }
+        }
+
+        function drawFloor() {
+            ctx.drawImage(floorImg, floorOffset, canvas.height - 50, canvas.width, 50);
+            ctx.drawImage(floorImg, floorOffset + canvas.width, canvas.height - 50, canvas.width, 50);
+        }
+
+        function updateFloor() {
+            floorOffset -= 2;
+            if (floorOffset <= -canvas.width) {
+                floorOffset = 0;
+            }
+        }
+
+        let frameCount = 0;
+
+        function draw() {
+            if (gameIsOver) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawBackground();
+            drawClouds();
+            updateClouds();
+
+            bird.draw();
+            bird.update();
+
+            if (frameCount % pipeFrequency === 0) {
+                addPipe();
+            }
+
+            drawPipes();
+            updatePipes();
+            drawFloor();
+            updateFloor();
+
+            drawScore();
+
+            frameCount++;
+            requestAnimationFrame(draw);
+        }
+
+        function gameOver() {
+            gameIsOver = true;
+            birdDeathSound.play(); // Play bird death sound
+            backgroundMusic.pause(); // Pause background music
+            document.querySelector('.game-over').classList.add('active');
+            document.getElementById('finalScore').innerText = Math.floor(score);
+        }
+
+        function startGame() {
+            console.log('Game Started');  // Check if this message is logged when clicking Play
+            document.querySelector('.menu').classList.remove('active');
+            canvas.style.display = 'block';
+            gameIsOver = false;
+            pipes = [];
+            score = 0;
+            bird.y = 150;
+            draw();
+            backgroundMusic.play(); // Start background music when game starts
+        }
+
+        function viewScores() {
+            alert('High Scores feature is under construction.');
+        }
+
+        function restartGame() {
+            document.querySelector('.game-over').classList.remove('active');
+            startGame();
+        }
+
+        // Handle touch events for mobile devices
+        canvas.addEventListener('click', () => {
+            if (!gameIsOver) bird.up();
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent default touch action (scrolling, etc.)
+            if (!gameIsOver) bird.up();
+        });
+    </script>
+</body>
+</html>
